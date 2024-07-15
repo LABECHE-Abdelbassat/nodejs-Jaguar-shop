@@ -1,113 +1,82 @@
-const asyncHandler = require("express-async-handler");
-const ApiError = require("../utils/apiError");
-const ApiFeatures = require("../utils/apiFeatures");
+class ApiFeatures {
+  constructor(mongooseQuery, queryString) {
+    this.mongooseQuery = mongooseQuery;
+    this.queryString = queryString;
+  }
 
-exports.deleteOne = (Model) =>
-  asyncHandler(async (req, res, next) => {
-    const { id } = req.params;
-    const document = await Model.findByIdAndDelete(id);
+  filter() {
+    const queryStringObj = { ...this.queryString };
+    const excludesFields = ["page", "sort", "limit", "fields"];
+    excludesFields.forEach((field) => delete queryStringObj[field]);
 
-    if (!document) {
-      return next(new ApiError(`No document for this id ${id}`, 404));
+    let queryStr = JSON.stringify(queryStringObj);
+    queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, (match) => `$${match}`);
+
+    this.mongooseQuery = this.mongooseQuery.find(JSON.parse(queryStr));
+
+    return this;
+  }
+
+  sort() {
+    if (this.queryString.sort) {
+      const sortBy = this.queryString.sort.split(",").join(" ");
+      this.mongooseQuery = this.mongooseQuery.sort(sortBy);
+    } else {
+      this.mongooseQuery = this.mongooseQuery.sort("-createAt");
     }
+    return this;
+  }
 
-    // Trigger "remove" event when update document
-    document.remove();
-    res.status(204).send();
-  });
-
-exports.updateOne = (Model) =>
-  asyncHandler(async (req, res, next) => {
-    const document = await Model.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-
-    if (!document) {
-      return next(
-        new ApiError(`No document for this id ${req.params.id}`, 404)
-      );
+  limitFields() {
+    if (this.queryString.fields) {
+      const fields = this.queryString.fields.split(",").join(" ");
+      this.mongooseQuery = this.mongooseQuery.select(fields);
+    } else {
+      this.mongooseQuery = this.mongooseQuery.select("-__v");
     }
-    // Trigger "save" event when update document
-    document.save();
-    res.status(200).json({ data: document });
-  });
+    return this;
+  }
 
-exports.createOne = (Model) =>
-  asyncHandler(async (req, res) => {
-    const newDoc = await Model.create(req.body);
-    res.status(201).json({ data: newDoc });
-  });
+  search(modelName) {
+    if (this.queryString.keyword) {
+      let query = {};
+      if (modelName === "Products") {
+        query.$or = [
+          { title: { $regex: this.queryString.keyword, $options: "i" } },
+          { description: { $regex: this.queryString.keyword, $options: "i" } },
+        ];
+      } else {
+        query = { name: { $regex: this.queryString.keyword, $options: "i" } };
+      }
 
-exports.getOne = (Model, populationOpt) =>
-  asyncHandler(async (req, res, next) => {
-    const { id } = req.params;
-    // 1) Build query
-    let query = Model.findById(id);
-    if (populationOpt) {
-      query = query.populate(populationOpt);
+      this.mongooseQuery = this.mongooseQuery.find(query);
     }
+    return this;
+  }
 
-    // 2) Execute query
-    const document = await query;
+  paginate(count) {
+    const page = this.queryString.page * 1 || 1;
+    const limit = this.queryString.limit * 1 || 30;
+    const skip = (page - 1) * limit;
+    const endIndex = page * limit;
 
-    if (!document) {
-      return next(new ApiError(`No document for this id ${id}`, 404));
+    const pagination = {};
+    pagination.currentPage = page;
+    pagination.limit = limit;
+    pagination.numberOfPages = Math.ceil(count / limit);
+    pagination.itemsCount = count;
+
+    if (endIndex < count) {
+      pagination.next = page + 1;
     }
-    res.status(200).json({ data: document });
-  });
-
-// exports.getAll = (Model, modelName = "") =>
-//   asyncHandler(async (req, res) => {
-//     let filter = {};
-//     if (req.filterObj) {
-//       filter = req.filterObj;
-//     }
-//     // Build query
-//     const documentsCounts = await Model.countDocuments();
-//     const apiFeatures = new ApiFeatures(
-//       documentsCounts,
-//       Model.find(filter),
-//       req.query
-//     )
-//       .filter()
-//       .search(modelName)
-//       .limitFields()
-//       .sort()
-//       .paginate();
-//     // Execute query
-//     const { mongooseQuery, paginationResult } = apiFeatures;
-//     const documents = await mongooseQuery;
-
-//     res
-//       .status(200)
-//       .json({ results: documents.length, paginationResult, data: documents });
-//   });
-
-exports.getAll = (Model, modelName = "") =>
-  asyncHandler(async (req, res) => {
-    let filter = {};
-    if (req.filterObj) {
-      filter = req.filterObj;
+    if (skip > 0) {
+      pagination.prev = page - 1;
     }
-    const documentsCounts = await Model.countDocuments();
+    this.mongooseQuery = this.mongooseQuery.skip(skip).limit(limit);
 
-    const apiFeatures = new ApiFeatures(
-      documentsCounts,
-      Model.find(filter),
-      req.query
-    )
-      .limitFields()
-      .sort();
+    this.paginationResult = pagination;
+    return this;
+  }
+}
 
-    // Count documents after applying filters and search
-    await apiFeatures.filter(); // Ensure the documentsCounts is updated
-    await apiFeatures.search(modelName); // Ensure the documentsCounts is updated
-
-    // Execute query with pagination
-    const { mongooseQuery, paginationResult } = apiFeatures.paginate();
-    const documents = await mongooseQuery;
-
-    res
-      .status(200)
-      .json({ results: documents.length, paginationResult, data: documents });
-  });
+module.exports = ApiFeatures;
