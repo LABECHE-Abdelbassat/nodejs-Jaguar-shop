@@ -1,10 +1,11 @@
 class ApiFeatures {
-  constructor(mongooseQuery, queryString) {
+  constructor(documentsCounts, mongooseQuery, queryString) {
     this.mongooseQuery = mongooseQuery;
     this.queryString = queryString;
+    this.documentsCounts = documentsCounts; // Initialize to zero
   }
 
-  filter() {
+  async filter() {
     const queryStringObj = { ...this.queryString };
     const excludesFields = ["page", "sort", "limit", "fields"];
     excludesFields.forEach((field) => delete queryStringObj[field]);
@@ -13,6 +14,9 @@ class ApiFeatures {
     queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, (match) => `$${match}`);
 
     this.mongooseQuery = this.mongooseQuery.find(JSON.parse(queryStr));
+
+    // Update the documents count based on the filtered query
+    this.documentsCounts = await this.mongooseQuery.clone().countDocuments();
 
     return this;
   }
@@ -37,7 +41,7 @@ class ApiFeatures {
     return this;
   }
 
-  search(modelName) {
+  async search(modelName) {
     if (this.queryString.keyword) {
       let query = {};
       if (modelName === "Products") {
@@ -50,11 +54,13 @@ class ApiFeatures {
       }
 
       this.mongooseQuery = this.mongooseQuery.find(query);
+      // Update the documents count based on the search query
+      this.documentsCounts = await this.mongooseQuery.clone().countDocuments();
     }
     return this;
   }
 
-  paginate(count) {
+  paginate() {
     const page = this.queryString.page * 1 || 1;
     const limit = this.queryString.limit * 1 || 30;
     const skip = (page - 1) * limit;
@@ -63,10 +69,10 @@ class ApiFeatures {
     const pagination = {};
     pagination.currentPage = page;
     pagination.limit = limit;
-    pagination.numberOfPages = Math.ceil(count / limit);
-    pagination.itemsCount = count;
+    pagination.numberOfPages = Math.ceil(this.documentsCounts / limit);
+    pagination.itemsCount = this.documentsCounts;
 
-    if (endIndex < count) {
+    if (endIndex < this.documentsCounts) {
       pagination.next = page + 1;
     }
     if (skip > 0) {

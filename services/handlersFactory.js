@@ -91,18 +91,20 @@ exports.getAll = (Model, modelName = "") =>
     }
     const documentsCounts = await Model.countDocuments();
 
-    const apiFeatures = new ApiFeatures(Model.find(filter), req.query)
+    const apiFeatures = new ApiFeatures(
+      documentsCounts,
+      Model.find(filter),
+      req.query
+    )
       .limitFields()
       .sort();
 
     // Count documents after applying filters and search
-    apiFeatures.filter(); // Ensure the documentsCounts is updated
-    apiFeatures.search(modelName); // Ensure the documentsCounts is updated
+    await apiFeatures.filter(); // Ensure the documentsCounts is updated
+    await apiFeatures.search(modelName); // Ensure the documentsCounts is updated
 
     // Execute query with pagination
-    const { mongooseQuery, paginationResult } = apiFeatures.paginate(
-      await apiFeatures.mongooseQuery.clone().countDocuments()
-    );
+    const { mongooseQuery, paginationResult } = apiFeatures.paginate();
     const documents = await mongooseQuery;
 
     res
